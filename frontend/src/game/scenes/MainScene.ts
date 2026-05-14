@@ -20,7 +20,7 @@ export default class MainScene extends Phaser.Scene {
         const map = this.make.tilemap({ key: "map" });
 
         const tileset = map.addTilesetImage(
-            "tileset-map",
+            "City",
             "tiles"
         );
 
