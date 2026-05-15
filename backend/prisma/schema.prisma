@@ -1,0 +1,94 @@
+generator client {
+	provider = "prisma-client-js"
+}
+
+datasource db {
+	provider = "postgresql"
+	url = env("DATABASE_URL")
+}
+
+enum FriendshipStatus {
+	PENDING
+	ACCEPTED
+	BLOCKED
+}
+
+enum GameMode {
+	PVP
+	COOP
+}
+
+model	Friendship {
+	id			Int				 	@id	@default(autoincrement())
+	senderId	Int
+	sender		User				@relation("FriendSender", fields: [senderId], references: [id])
+	receiverId	Int
+	receiver	User				@relation("FriendReceiver", fields: [receiverId], references: [id])
+	status		FriendshipStatus	@default(PENDING)
+	createdAt	DateTime			@default(now())
+}
+
+model	User {
+	id					Int				@id	@default(autoincrement())
+	username			String			unique
+	email				String			unique
+	password			String
+	avatar				String?
+	isOnline			Boolean			@default(false)
+	createdAt			DateTime		@default(now())
+	sentFShip			Friendship[]	@relation("FriendSender")
+	rcvdFShip			Friendship[]	@relation("FriendReceiver")
+	matchesAsPlayer1	Match[]			@relation("MatchPlayer1")
+	matchesAsPlayer2	Match[]			@relation("MatchPlayer2")
+	matchesAsPlayer3	Match[]			@relation("MatchPlayer3")
+	matchesAsPlayer4	Match[]			@relation("MatchPlayer4")
+  	stat				Stat?
+	xp					Int				@default(0)
+	level				Int				@default(1)
+	unlockedWeapons		UserWeapon[]
+}
+
+model	Match {
+	id				Int				@id	@default(autoincrement())
+	player1Id		Int
+	player1			User			@relation("MatchPlayer1", fields: [player1Id], references: [id])
+	player2Id		Int
+	player2			User			@relation("MatchPlayer2", fields: [player2Id], references: [id])
+	player3Id		Int?
+	player3			User?			@relation("MatchPlayer3", fields: [player3Id], references: [id])
+	player4Id		Int?
+	player4			User?			@relation("MatchPlayer4", fields: [player4Id], references: [id])
+	scorePlayer1 	Int				@default(0)
+	scorePlayer2	Int				@default(0)
+	scorePlayer3	Int?
+	scorePlayer4	Int?
+	winnerId		Int?
+	mode			GameMode
+	playedAt		DateTime		@default(now())
+}
+
+model	Stat {
+	id				Int				@id	@default(autoincrement())
+	userId			Int				unique
+	user			User			@relation(fields: [userId], references: [id])
+	wins			Int				@default(0)
+	losses			Int				@default(0)
+	gamesPlayed		Int				@default(0)
+}
+
+model	Weapon {
+	id				Int				@id	@default(autoincrement())
+	name			String			unique
+	damage			Int
+	levelRequired	Int
+	unlocked		UserWeapon[]
+}
+
+model	UserWeapon {
+	id				Int				@id	@default(autoincrement())
+	userId			Int
+	user			User			@relation(fields: [userId], references: [id])
+	weaponId		Int
+	weapon			Weapon			@relation(fields: [weaponId], references: [id])
+	unlockedAt		DateTime		@default(now())
+}
