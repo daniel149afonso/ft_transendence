@@ -28,7 +28,9 @@ export default class MainScene extends Phaser.Scene {
         // MAP
         this.add.image(0, 0, "map").setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H);
 
-        // COLLISION WALLS — build invisible bodies from the Grass layer (tile 1 = wall)
+        // COLLISION WALLS — obstacle layers (grass, ground and fences are walkable)
+        const OBSTACLE_LAYERS = ["Trees", "Houses", "Rocks", "Water", "Tower", "Fences"];
+
         const gfx = this.add.graphics();
         gfx.fillStyle(0xffffff);
         gfx.fillRect(0, 0, 1, 1);
@@ -36,28 +38,31 @@ export default class MainScene extends Phaser.Scene {
         gfx.destroy();
 
         const walls = this.physics.add.staticGroup();
-        const grassLayer = (mapData.layers as { name: string; data: number[] }[])
-            .find(l => l.name === "Grass");
+        const layers = mapData.layers as { name: string; data: number[] }[];
 
-        if (grassLayer) {
-            grassLayer.data.forEach((tile, index) => {
-                if (tile !== 1) return;
-                const col = index % COLS;
-                const row = Math.floor(index / COLS);
-                const x = col * tileW + tileW / 2;
-                const y = row * tileH + tileH / 2;
-                (walls.create(x, y, "pixel") as Phaser.Physics.Arcade.Sprite)
-                    .setVisible(false)
-                    .setDisplaySize(tileW, tileH)
-                    .refreshBody();
+        layers
+            .filter(l => OBSTACLE_LAYERS.includes(l.name))
+            .forEach(layer => {
+                layer.data.forEach((tile, index) => {
+                    if (tile === 0) return;
+                    const col = index % COLS;
+                    const row = Math.floor(index / COLS);
+                    const x = col * tileW + tileW / 2;
+                    const y = row * tileH + tileH / 2;
+                    (walls.create(x, y, "pixel") as Phaser.Physics.Arcade.Sprite)
+                        .setVisible(false)
+                        .setDisplaySize(tileW, tileH)
+                        .refreshBody();
+                });
             });
-        }
 
         // PLAYER
         this.player = this.physics.add.sprite(240, 240, "player");
         this.player.setScale(1.8);
         this.player.setFrame(0);
         this.player.setCollideWorldBounds(true);
+        // Hitbox réduite aux pieds : 10×8 en bas du frame 16×32
+        (this.player.body as Phaser.Physics.Arcade.Body).setSize(10, 8).setOffset(3, 24);
 
         // COLLIDER
         this.physics.add.collider(this.player, walls);
