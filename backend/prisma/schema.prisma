@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
 	provider = "postgresql"
-	url = env("DATABASE_URL")
 }
 
 enum FriendshipStatus {
@@ -30,8 +29,8 @@ model	Friendship {
 
 model	User {
 	id					Int				@id	@default(autoincrement())
-	username			String			unique
-	email				String			unique
+	username			String			@unique
+	email				String			@unique
 	password			String
 	avatar				String?
 	isOnline			Boolean			@default(false)
@@ -69,7 +68,7 @@ model	Match {
 
 model	Stat {
 	id				Int				@id	@default(autoincrement())
-	userId			Int				unique
+	userId			Int				@unique
 	user			User			@relation(fields: [userId], references: [id])
 	wins			Int				@default(0)
 	losses			Int				@default(0)
@@ -78,7 +77,7 @@ model	Stat {
 
 model	Weapon {
 	id				Int				@id	@default(autoincrement())
-	name			String			unique
+	name			String			@unique
 	damage			Int
 	levelRequired	Int
 	unlocked		UserWeapon[]
