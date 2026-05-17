@@ -1,14 +1,20 @@
 import Phaser from "phaser";
 import mapData from "../maps/map.json";
 
+type EnemyState = "sleeping" | "chasing";
+
 export default class MainScene extends Phaser.Scene {
     player!: Phaser.Physics.Arcade.Sprite;
+    enemy!: Phaser.Physics.Arcade.Sprite;
+    enemyState: EnemyState = "sleeping";
     cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     wasd!: { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
     spaceKey!: Phaser.Input.Keyboard.Key;
     facingDir = "down";
     isAttacking = false;
-    debugText!: Phaser.GameObjects.Text;
+
+    private readonly WAKE_DISTANCE = 120;
+    private readonly ENEMY_SPEED   = 60;
 
     constructor() {
         super("MainScene");
@@ -16,8 +22,19 @@ export default class MainScene extends Phaser.Scene {
 
     preload() {
         this.load.image("map", "src/game/assets/map.png");
+        // Walk — 17 cols × 8 rows (16×32 per frame)
         this.load.spritesheet("player", "src/game/assets/player.png", {
             frameWidth: 16,
+            frameHeight: 32,
+        });
+        // Attack — frames de 32×32 (chaque pose = 2 colonnes de 16px assemblées)
+        this.load.spritesheet("player-atk", "src/game/assets/player.png", {
+            frameWidth: 32,
+            frameHeight: 32,
+        });
+        // Enemy — 4 cols × 4 rows (32×32 per frame)
+        this.load.spritesheet("enemy", "src/game/assets/enemy.png", {
+            frameWidth: 32,
             frameHeight: 32,
         });
     }
@@ -33,9 +50,8 @@ export default class MainScene extends Phaser.Scene {
         // MAP
         this.add.image(0, 0, "map").setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H);
 
-        // COLLISION WALLS — obstacle layers (grass, ground and fences are walkable)
+        // COLLISION WALLS
         const OBSTACLE_LAYERS = ["Trees", "Houses", "Rocks", "Water", "Tower", "Fences"];
-
         const gfx = this.add.graphics();
         gfx.fillStyle(0xffffff);
         gfx.fillRect(0, 0, 1, 1);
@@ -44,7 +60,6 @@ export default class MainScene extends Phaser.Scene {
 
         const walls = this.physics.add.staticGroup();
         const layers = mapData.layers as { name: string; data: number[] }[];
-
         layers
             .filter(l => OBSTACLE_LAYERS.includes(l.name))
             .forEach(layer => {
@@ -65,28 +80,32 @@ export default class MainScene extends Phaser.Scene {
         this.player = this.physics.add.sprite(240, 240, "player");
         this.player.setScale(1.8);
         this.player.setCollideWorldBounds(true);
-        (this.player.body as Phaser.Physics.Arcade.Body).setSize(10, 8).setOffset(3, 24);
+        const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
+        playerBody.setSize(10, 19).setOffset(3, 8);
+        playerBody.pushable = false;
 
-        // ANIMATIONS — 17 cols per row, 3 frames per direction
         const COLS_PER_ROW = 17;
-        const fps = 8;
-        const dirs: { key: string; row: number }[] = [
+
+        // WALK ANIMATIONS — rows 0-3, 3 frames each
+        const walkDirs: { key: string; row: number }[] = [
             { key: "down",  row: 0 },
             { key: "right", row: 1 },
             { key: "up",    row: 2 },
             { key: "left",  row: 3 },
         ];
-        dirs.forEach(({ key, row }) => {
+        walkDirs.forEach(({ key, row }) => {
             const start = row * COLS_PER_ROW;
             this.anims.create({
                 key: `walk-${key}`,
                 frames: this.anims.generateFrameNumbers("player", { frames: [start, start + 1, start + 2] }),
-                frameRate: fps,
+                frameRate: 8,
                 repeat: -1,
             });
         });
 
-        // Attack animations — bottom half of spritesheet (rows 4-7)
+        // ATTACK ANIMATIONS — "player-atk" texture, frameWidth 32px
+        // Math.floor(272/32) = 8 cols per row
+        // 8 × 16px frames = 4 × 32px frames per direction (rows 4-7)
         const attackDirs: { key: string; row: number }[] = [
             { key: "down",  row: 4 },
             { key: "up",    row: 5 },
@@ -94,31 +113,60 @@ export default class MainScene extends Phaser.Scene {
             { key: "left",  row: 7 },
         ];
         attackDirs.forEach(({ key, row }) => {
-            const start = row * COLS_PER_ROW;
+            const start = row * 8; // 8 cols per row at 32px
             this.anims.create({
                 key: `attack-${key}`,
-                frames: this.anims.generateFrameNumbers("player", { frames: [start, start + 1, start + 2, start + 3] }),
-                frameRate: 12,
+                frames: this.anims.generateFrameNumbers("player-atk", {
+                    frames: [start, start+1, start+2, start+3],
+                }),
+                frameRate: 10,
                 repeat: 0,
             });
         });
+
         this.player.anims.play("walk-down");
 
         this.player.on("animationcomplete", (anim: Phaser.Animations.Animation) => {
             if (anim.key.startsWith("attack-")) {
                 this.isAttacking = false;
+                this.resetHitbox();
                 this.player.anims.play(`walk-${this.facingDir}`, true);
             }
         });
 
-        // DEBUG — frame number display (remove once correct frames are identified)
-        this.debugText = this.add.text(8, 8, "", { fontSize: "14px", color: "#ffff00" }).setScrollFactor(0).setDepth(10);
+        // ENEMY ANIMATIONS — 6 cols × 4 rows (frameWidth=32)
+        // cols 0-3 = walk loop, col 4 = sleep
+        this.anims.create({
+            key: "enemy-sleep",
+            frames: this.anims.generateFrameNumbers("enemy", { frames: [4] }),
+            frameRate: 1,
+            repeat: -1,
+        });
+        this.anims.create({
+            key: "enemy-walk",
+            frames: this.anims.generateFrameNumbers("enemy", { frames: [0, 1, 2, 3] }),
+            frameRate: 6,
+            repeat: -1,
+        });
 
-        // COLLIDER
+        // ENEMY SPRITE
+        this.enemy = this.physics.add.sprite(400, 300, "enemy");
+        this.enemy.setScale(1.8);
+        this.enemy.setCollideWorldBounds(true);
+        const enemyBody = this.enemy.body as Phaser.Physics.Arcade.Body;
+        enemyBody.setSize(16, 20).setOffset(8, 9);
+        enemyBody.pushable = false;
+        this.enemy.anims.play("enemy-sleep");
+
+        // COLLIDERS — order matters: player-walls must be last so it corrects
+        // any position the enemy may have pushed the player into during the same frame
+        this.physics.add.collider(this.enemy, walls);
+        this.physics.add.collider(this.player, this.enemy, () => {
+            (this.enemy.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+        });
         this.physics.add.collider(this.player, walls);
 
-        // CAMERA — Zelda-like: zoom in so the map is larger than the viewport,
-        // smooth lerp follow, bounded to world edges
+        // CAMERA
         this.physics.world.setBounds(0, 0, MAP_W, MAP_H);
         this.cameras.main.setBounds(0, 0, MAP_W, MAP_H);
         this.cameras.main.setLerp(0.1, 0.1);
@@ -136,14 +184,12 @@ export default class MainScene extends Phaser.Scene {
     }
 
     update() {
-        // Attack takes full control until the animation finishes
         if (Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.isAttacking) {
             this.isAttacking = true;
             this.player.setVelocity(0);
             this.player.anims.play(`attack-${this.facingDir}`, true);
+            this.setAttackHitbox();
         }
-
-        this.debugText.setText(`frame: ${this.player.frame.name} | anim: ${this.player.anims.currentAnim?.key ?? "none"}`);
 
         if (this.isAttacking) return;
 
@@ -167,11 +213,45 @@ export default class MainScene extends Phaser.Scene {
 
         this.player.setVelocity(vx, vy);
 
-        // Track facing direction and play walk animation
         if (left)       { this.facingDir = "left";  this.player.anims.play("walk-left",  true); }
         else if (right) { this.facingDir = "right"; this.player.anims.play("walk-right", true); }
         else if (up)    { this.facingDir = "up";    this.player.anims.play("walk-up",    true); }
         else if (down)  { this.facingDir = "down";  this.player.anims.play("walk-down",  true); }
         else            { this.player.anims.stop(); }
+
+        this.updateEnemy();
+    }
+
+    private resetHitbox() {
+        (this.player.body as Phaser.Physics.Arcade.Body).setSize(10, 19).setOffset(3, 8);
+    }
+
+    private setAttackHitbox() {
+        const body = this.player.body as Phaser.Physics.Arcade.Body;
+        switch (this.facingDir) {
+            case "down":  body.setSize(10, 30).setOffset(3, 8);   break;
+            case "up":    body.setSize(10, 30).setOffset(3, -10); break;
+            case "right": body.setSize(22, 19).setOffset(3, 8);   break;
+            case "left":  body.setSize(22, 19).setOffset(-9, 8);  break;
+        }
+    }
+
+    private updateEnemy() {
+        const dist = Phaser.Math.Distance.Between(
+            this.enemy.x, this.enemy.y,
+            this.player.x, this.player.y
+        );
+
+        if (this.enemyState === "sleeping") {
+            (this.enemy.body as Phaser.Physics.Arcade.Body).setImmovable(true);
+            if (dist < this.WAKE_DISTANCE) {
+                this.enemyState = "chasing";
+                (this.enemy.body as Phaser.Physics.Arcade.Body).setImmovable(false);
+                this.enemy.anims.play("enemy-walk", true);
+            }
+        } else if (this.enemyState === "chasing") {
+            this.physics.moveToObject(this.enemy, this.player, this.ENEMY_SPEED);
+            this.enemy.setFlipX(this.player.x < this.enemy.x);
+        }
     }
 }
