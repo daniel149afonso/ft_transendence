@@ -19,18 +19,22 @@ export class Enemy {
     constructor(scene: Phaser.Scene, x: number, y: number) {
         this.scene = scene;
 
-        scene.anims.create({
-            key:       "enemy-sleep",
-            frames:    scene.anims.generateFrameNumbers("enemy", { frames: [4] }),
-            frameRate: 1,
-            repeat:    -1,
-        });
-        scene.anims.create({
-            key:       "enemy-walk",
-            frames:    scene.anims.generateFrameNumbers("enemy", { frames: [0, 1, 2, 3] }),
-            frameRate: 6,
-            repeat:    -1,
-        });
+        if (!scene.anims.exists("enemy-sleep")) {
+            scene.anims.create({
+                key:       "enemy-sleep",
+                frames:    scene.anims.generateFrameNumbers("enemy", { frames: [4] }),
+                frameRate: 1,
+                repeat:    -1,
+            });
+        }
+        if (!scene.anims.exists("enemy-walk")) {
+            scene.anims.create({
+                key:       "enemy-walk",
+                frames:    scene.anims.generateFrameNumbers("enemy", { frames: [0, 1, 2, 3] }),
+                frameRate: 6,
+                repeat:    -1,
+            });
+        }
 
         this.sprite = scene.physics.add.sprite(x, y, "enemy");
         this.sprite.setScale(1.8).setCollideWorldBounds(true);

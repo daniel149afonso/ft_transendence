@@ -2,7 +2,6 @@ import Phaser from "phaser";
 import dungeonData from "../maps/dungeon.json";
 import { Player }         from "../entities/Player";
 import { HUD }            from "../ui/HUD";
-import { GameOverScreen } from "../ui/GameOverScreen";
 
 const OBSTACLE_LAYERS = ["Water", "Rock"];
 const MAP_W = 800;
@@ -10,13 +9,14 @@ const MAP_H = 600;
 const COLS  = 30;
 const ROWS  = 20;
 
-// Dungeon door entrance: col 17, row 19 (bottom) → spawn player at row 17
+// Spawn just above the dungeon door (Door layer: col 17, row 19)
 const SPAWN_X = 17 * (MAP_W / COLS) + (MAP_W / COLS) / 2;
 const SPAWN_Y = 17 * (MAP_H / ROWS) + (MAP_H / ROWS) / 2;
 
 export default class DungeonScene extends Phaser.Scene {
     private player!: Player;
     private hud!:    HUD;
+    private boxes:   Phaser.Physics.Arcade.Sprite[] = [];
 
     private cursors!:  Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!:     { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
@@ -30,11 +30,11 @@ export default class DungeonScene extends Phaser.Scene {
     init() {
         this.isGameOver    = false;
         this.transitioning = false;
+        this.boxes         = [];
     }
 
     preload() {
-        this.load.image("dungeon", "src/game/assets/dungeon.png");
-        // Player sprites are cached globally — re-declaring is safe (no re-download)
+        this.load.image("dungeon",      "src/game/assets/dungeon.png");
         this.load.spritesheet("player",     "src/game/assets/player.png",  { frameWidth: 16, frameHeight: 32 });
         this.load.spritesheet("player-atk", "src/game/assets/player.png",  { frameWidth: 32, frameHeight: 32 });
         this.load.spritesheet("objects",    "src/game/assets/objects.png",  { frameWidth: 16, frameHeight: 16 });
@@ -43,12 +43,17 @@ export default class DungeonScene extends Phaser.Scene {
     create() {
         this.add.image(0, 0, "dungeon").setOrigin(0, 0).setDisplaySize(MAP_W, MAP_H);
 
-        const walls = this.buildWalls();
+        const tileW = MAP_W / COLS;
+        const tileH = MAP_H / ROWS;
+
+        const walls = this.buildWalls(tileW, tileH);
+        this.addBoxes(walls, tileW, tileH);
 
         this.player = new Player(this, SPAWN_X, SPAWN_Y);
         this.hud    = new HUD(this);
 
         this.physics.add.collider(this.player.sprite, walls);
+        this.boxes.forEach(box => this.physics.add.collider(this.player.sprite, box));
         this.setupExitZone();
 
         this.physics.world.setBounds(0, 0, MAP_W, MAP_H);
@@ -72,12 +77,13 @@ export default class DungeonScene extends Phaser.Scene {
         if (this.isGameOver) return;
         this.player.handleInput(this.cursors, this.wasd, this.spaceKey);
         this.hud.update(this.player.hp);
+        // Boxes stop as soon as the player stops pushing them
+        this.boxes.forEach(b => (b.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0));
     }
 
     private setupExitZone() {
         const tileW = MAP_W / COLS;
         const tileH = MAP_H / ROWS;
-        // Porte de sortie du donjon : col 17, row 19 (bas de la map)
         const exitX = 17 * tileW + tileW / 2;
         const exitY = 19 * tileH + tileH / 2;
         const zone = this.add.zone(exitX, exitY, tileW, tileH);
@@ -93,10 +99,43 @@ export default class DungeonScene extends Phaser.Scene {
         });
     }
 
-    private buildWalls(): Phaser.Physics.Arcade.StaticGroup {
-        const tileW = MAP_W / COLS;
-        const tileH = MAP_H / ROWS;
+    private addBoxes(walls: Phaser.Physics.Arcade.StaticGroup, tileW: number, tileH: number) {
+        // Each crate is a 2×2 tile block; tile 6888 is the top-left corner
+        const BOX_TOPLEFT = 6888;
 
+        const boxLayer = (dungeonData.layers as { name: string; data: number[] }[])
+            .find(l => l.name === "Box");
+
+        if (!boxLayer) return;
+
+        boxLayer.data.forEach((tile, idx) => {
+            if (tile !== BOX_TOPLEFT) return;
+            const col = idx % COLS;
+            const row = Math.floor(idx / COLS);
+            // Center of the 2×2 area starting at (col, row)
+            const x = (col + 1) * tileW;
+            const y = (row + 1) * tileH;
+
+            // Invisible sprite — dungeon.png provides the visual
+            const box = this.physics.add.sprite(x, y, "pixel");
+            box.setDisplaySize(tileW * 2, tileH * 2)
+               .setVisible(false)
+               .setCollideWorldBounds(true);
+
+            const body = box.body as Phaser.Physics.Arcade.Body;
+            body.setSize(tileW * 2, tileH * 2);
+            body.debugBodyColor = 0x0000ff;
+
+            this.physics.add.collider(box, walls);
+            this.boxes.push(box);
+        });
+
+        for (let i = 0; i < this.boxes.length; i++)
+            for (let j = i + 1; j < this.boxes.length; j++)
+                this.physics.add.collider(this.boxes[i], this.boxes[j]);
+    }
+
+    private buildWalls(tileW: number, tileH: number): Phaser.Physics.Arcade.StaticGroup {
         if (!this.textures.exists("pixel")) {
             const gfx = this.add.graphics();
             gfx.fillStyle(0xffffff).fillRect(0, 0, 1, 1);

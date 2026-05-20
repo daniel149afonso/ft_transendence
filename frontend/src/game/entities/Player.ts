@@ -39,7 +39,6 @@ export class Player {
         this.sprite.setScale(1.8).setCollideWorldBounds(true);
         const body = this.sprite.body as Phaser.Physics.Arcade.Body;
         body.setSize(10, 19).setOffset(BODY_OFFSET_WALK.x, BODY_OFFSET_WALK.y);
-        body.pushable = false;
 
         this.createAnimations();
         this.sprite.anims.play("walk-down");
@@ -174,6 +173,7 @@ export class Player {
 
     private createAnimations() {
         WALK_DIRS.forEach(({ key, row }) => {
+            if (this.scene.anims.exists(`walk-${key}`)) return;
             const start = row * WALK_COLS_PER_ROW;
             this.scene.anims.create({
                 key: `walk-${key}`,
@@ -185,6 +185,7 @@ export class Player {
             });
         });
         ATTACK_DIRS.forEach(({ key, row }) => {
+            if (this.scene.anims.exists(`attack-${key}`)) return;
             const start = row * 8;
             this.scene.anims.create({
                 key: `attack-${key}`,

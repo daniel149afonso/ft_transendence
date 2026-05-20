@@ -5,7 +5,7 @@ import { Enemy }          from "../entities/Enemy";
 import { HUD }            from "../ui/HUD";
 import { GameOverScreen } from "../ui/GameOverScreen";
 
-const OBSTACLE_LAYERS = ["Tree", "House", "Rock", "Water", "Tower", "Fence"];
+const OBSTACLE_LAYERS = ["Tree", "House", "Rock", "Water", "Tower", "Fence", "Skull", "Box"];
 const MAP_W = 800;
 const MAP_H = 600;
 const COLS  = 30;
@@ -54,6 +54,8 @@ export default class MainScene extends Phaser.Scene {
         const walls = this.buildWalls();
 
         this.player = new Player(this, this.spawnX, this.spawnY);
+        // Prevent the enemy from pushing the player via physics collision
+        (this.player.sprite.body as Phaser.Physics.Arcade.Body).pushable = false;
         this.enemy  = new Enemy(this,  400, 300);
         this.hud    = new HUD(this);
 
@@ -84,10 +86,12 @@ export default class MainScene extends Phaser.Scene {
            //Tower: { w: 1.0, h: 1.0, ox: 0, oy: 0 }
         };
         // 1×1 white texture used as an invisible wall tile
-        const gfx = this.add.graphics();
-        gfx.fillStyle(0xffffff).fillRect(0, 0, 1, 1);
-        gfx.generateTexture("pixel", 1, 1);
-        gfx.destroy();
+        if (!this.textures.exists("pixel")) {
+            const gfx = this.add.graphics();
+            gfx.fillStyle(0xffffff).fillRect(0, 0, 1, 1);
+            gfx.generateTexture("pixel", 1, 1);
+            gfx.destroy();
+        }
 
         const walls = this.physics.add.staticGroup();
         (mapData.layers as { name: string; data: number[] }[])
