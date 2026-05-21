@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import mapData from "../maps/map.json";
+import mapData from "../maps/village.json";
 import { Player }         from "../entities/Player";
 import { Enemy }          from "../entities/Enemy";
 import { HUD }            from "../ui/HUD";
@@ -41,10 +41,10 @@ export default class MainScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image("map", "src/game/assets/map.png");
-        this.load.spritesheet("player",  "src/game/assets/player.png",  { frameWidth: 16, frameHeight: 32 });
-        this.load.spritesheet("player-atk", "src/game/assets/player.png", { frameWidth: 32, frameHeight: 32 });
-        this.load.spritesheet("enemy",   "src/game/assets/enemy.png",   { frameWidth: 32, frameHeight: 32 });
+        this.load.image("map", "src/game/assets/maps/village.png");
+        this.load.spritesheet("player",  "src/game/assets/players/player.png",  { frameWidth: 16, frameHeight: 32 });
+        this.load.spritesheet("player-atk", "src/game/assets/players/player.png", { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet("enemy",   "src/game/assets/enemies/enemy.png",   { frameWidth: 32, frameHeight: 32 });
         this.load.spritesheet("objects", "src/game/assets/objects.png", { frameWidth: 16, frameHeight: 16 });
     }
 
