@@ -5,7 +5,8 @@ import { Enemy }          from "../entities/Enemy";
 import { HUD }            from "../ui/HUD";
 import { GameOverScreen } from "../ui/GameOverScreen";
 
-const OBSTACLE_LAYERS = ["Tree", "House", "Rock", "Water", "Tower", "Fence", "Skull", "Box"];
+// Colliders définis directement dans village.json via le layer "Collision"
+const COLLISION_LAYER = "Collision";
 const MAP_W = 800;
 const MAP_H = 600;
 const COLS  = 30;
@@ -56,7 +57,8 @@ export default class MainScene extends Phaser.Scene {
         this.player = new Player(this, this.spawnX, this.spawnY);
         // Prevent the enemy from pushing the player via physics collision
         (this.player.sprite.body as Phaser.Physics.Arcade.Body).pushable = false;
-        this.enemy  = new Enemy(this,  400, 300);
+        const [ex, ey] = this.getEnemySpawn();
+        this.enemy = new Enemy(this, ex, ey);
         this.hud    = new HUD(this);
 
         this.setupColliders(walls);
@@ -77,15 +79,11 @@ export default class MainScene extends Phaser.Scene {
 
     // --- private ---
 
+    /** Lit le layer "Collision" du JSON et crée un body statique par tile non-nul. */
     private buildWalls(): Phaser.Physics.Arcade.StaticGroup {
         const tileW = MAP_W / COLS;
         const tileH = MAP_H / ROWS;
 
-        // Per-layer hitbox overrides (fractions of tile size: w/h = size, ox/oy = offset from top-left)
-        const HITBOX: Record<string, { w: number; h: number; ox: number; oy: number }> = {
-           //Tower: { w: 1.0, h: 1.0, ox: 0, oy: 0 }
-        };
-        // 1×1 white texture used as an invisible wall tile
         if (!this.textures.exists("pixel")) {
             const gfx = this.add.graphics();
             gfx.fillStyle(0xffffff).fillRect(0, 0, 1, 1);
@@ -94,26 +92,36 @@ export default class MainScene extends Phaser.Scene {
         }
 
         const walls = this.physics.add.staticGroup();
-        (mapData.layers as { name: string; data: number[] }[])
-            .filter(l => OBSTACLE_LAYERS.includes(l.name))
-            .forEach(layer => {
-                const hb = HITBOX[layer.name];
-                layer.data.forEach((tile, idx) => {
-                    if (tile === 0) return;
-                    const x = (idx % COLS) * tileW + tileW / 2;
-                    const y = Math.floor(idx / COLS) * tileH + tileH / 2;
-                    const s = (walls.create(x, y, "pixel") as Phaser.Physics.Arcade.Sprite)
-                        .setVisible(false).setDisplaySize(tileW, tileH);
-                    s.refreshBody(); // sync position depuis displaySize
-                    if (hb) {
-                        // modifier le body APRÈS refreshBody — sinon il réinitialise tout
-                        (s.body as Phaser.Physics.Arcade.StaticBody)
-                            .setSize(tileW * hb.w, tileH * hb.h)
-                            .setOffset(tileW * hb.ox, tileH * hb.oy);
-                    }
-                });
-            });
+        const collisionLayer = (mapData.layers as { name: string; data: number[] }[])
+            .find(l => l.name === COLLISION_LAYER);
+
+        collisionLayer?.data.forEach((tile, idx) => {
+            if (tile === 0) return;
+            const x = (idx % COLS) * tileW + tileW / 2;
+            const y = Math.floor(idx / COLS) * tileH + tileH / 2;
+            (walls.create(x, y, "pixel") as Phaser.Physics.Arcade.Sprite)
+                .setVisible(false).setDisplaySize(tileW, tileH).refreshBody();
+        });
         return walls;
+    }
+
+    /** Lit le layer "EnemySpawn" et retourne la position du premier tile non-nul. */
+    private getEnemySpawn(): [number, number] {
+        const tileW = MAP_W / COLS;
+        const tileH = MAP_H / ROWS;
+        const layer = (mapData.layers as { name: string; data: number[] }[])
+            .find(l => l.name === "EnemySpawn");
+
+        if (layer) {
+            const idx = layer.data.findIndex(t => t !== 0);
+            if (idx !== -1) {
+                const x = (idx % COLS) * tileW + tileW / 2;
+                const y = Math.floor(idx / COLS) * tileH + tileH / 2;
+                return [x, y];
+            }
+        }
+        // Fallback si le layer est absent
+        return [400, 300];
     }
 
     private setupColliders(walls: Phaser.Physics.Arcade.StaticGroup) {
