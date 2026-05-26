@@ -2,18 +2,129 @@ import { useRef, useState, useEffect } from "react"
 import Phaser from "phaser"
 import { gameConfig } from "./game/config"
 
-export default function App() {
-  const [muted, setMuted] = useState(true)
-  const [modal, setModal] = useState<string | null>(null)
-  const [gameStarted, setGameStarted] = useState(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
+function PlayModal({ onLogin, onClose }: { onLogin: () => void; onClose: () => void }) {
+  return (
+    <>
+      <h2>Play</h2>
+      <input type="text" placeholder="Username" className="rpg-input" />
+      <input type="password" placeholder="Password" className="rpg-input" />
+      <button onClick={onLogin}>Login</button>
+      <div className="modal-buttons-row">
+        <button>Create account</button>
+        <button onClick={onClose}>Close</button>
+      </div>
+    </>
+  )
+}
 
-  const toggleMute = () => {
-    if (videoRef.current) {
-      videoRef.current.muted = !muted
-      setMuted(!muted)
+function OptionsModal({ onClose, audioRef }: { 
+  onClose: () => void
+  audioRef: React.RefObject<HTMLAudioElement | null>
+}) {
+  const currentMusicVolume = audioRef.current?.volume ?? 0.5
+
+  const handleMusicVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (audioRef.current) {
+      audioRef.current.volume = Number(e.target.value) / 100
     }
   }
+
+  return (
+    <>
+      <h2>Options</h2>
+      <label>Master Volume</label>
+      <input type="range" min="0" max="100" />
+      <label>Music Volume</label>
+      <input type="range" min="0" max="100"
+        defaultValue={currentMusicVolume * 100}
+        onChange={handleMusicVolume} />
+      <label>Dialogue Volume</label>
+      <input type="range" min="0" max="100" />
+      <button onClick={onClose}>Close</button>
+    </>
+  )
+}
+
+function LeaderboardModal({ onClose }: { onClose: () => void }) {
+  const rows = [
+    { rank: 1,  name: "Glorp",   guild: "—",     level: 42 },
+    { rank: 2,  name: "Feur",    guild: "Sigma",  level: 38 },
+    { rank: 3,  name: "Test",    guild: "—",      level: 35 },
+    { rank: 4,  name: "Bonjour", guild: "42",     level: 31 },
+    { rank: 5,  name: "Allo",    guild: "—",      level: 28 },
+    { rank: 6,  name: "Caca",    guild: "Sigma",  level: 22 },
+    { rank: 7,  name: "oups",    guild: "—",      level: 21 },
+    { rank: 8,  name: "test123", guild: "—",      level: 15 },
+    { rank: 9,  name: "hip",     guild: "—",      level: 10 },
+    { rank: 10, name: "Noob",    guild: "—",      level: 1  },
+  ]
+
+  return (
+    <>
+      <h2>Leaderboard</h2>
+      <div className="leaderboard-scroll">
+        <table className="leaderboard-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Guild</th>
+              <th>Level</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.rank}>
+                <td>{row.rank}</td>
+                <td>{row.name}</td>
+                <td>{row.guild}</td>
+                <td>{row.level}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button onClick={onClose}>Close</button>
+    </>
+  )
+}
+
+function MenuButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={() => { playClick(); onClick() }}>
+      {children}
+    </button>
+  )
+}
+
+const playClick = () => {
+  const audio = new Audio("/click.mp3")
+  audio.volume = 0.5
+  audio.play()
+}
+
+//Menu
+
+type ModalType = "play" | "options" | "leaderboard" | null
+
+export default function App() {
+  const [muted, setMuted] = useState(true)
+  const [modal, setModal] = useState<ModalType>(null)
+  const [gameStarted, setGameStarted] = useState(false)
+  const audioRef = useRef<HTMLAudioElement>(null)
+
+  const toggleMute = () => {
+  if (audioRef.current) {
+    if (muted) {
+      audioRef.current.muted = false
+      audioRef.current.play()
+    } else {
+      audioRef.current.muted = true
+    }
+    setMuted(!muted)
+  }
+  playClick()
+}
 
   const handleLogin = () => {
     setModal(null)
@@ -27,88 +138,44 @@ export default function App() {
     return () => { game.destroy(true) }
   }, [gameStarted])
 
+  useEffect(() => {
+  if (audioRef.current) {
+    audioRef.current.volume = 0.5
+  }
+}, [])
+
   if (gameStarted) {
-    return <div id="game-container"></div>
+    return <div id="game-container" />
   }
 
   return (
     <>
+      <audio ref={audioRef} src="/music.m4a" autoPlay loop muted />
+
       <div className="menu">
-        <video ref={videoRef} className="menu-video" autoPlay muted loop playsInline>
+        <video className="menu-video" autoPlay muted loop playsInline>
           <source src="/background.mp4" type="video/mp4" />
         </video>
 
-        <button onClick={toggleMute} style={{ position: "absolute", top: 16, right: 16, width: "auto", padding: "8px 16px", zIndex: 10 }}>
+        <button className="mute-button" onClick={toggleMute}>
           {muted ? "🔇" : "🔊"}
         </button>
 
-        <img src="/title.png" alt="ZELDOU" className="title"/>
-        <button onClick={() => setModal("play")}>Play</button>
-        <button onClick={() => setModal("Options")}>Options</button>
-        <button onClick={() => setModal("leaderboard")}>Leaderboard</button>
+        <img src="/title.png" alt="ZELDOU" className="title" />
+        <MenuButton onClick={() => setModal("play")}>Play</MenuButton>
+        <MenuButton onClick={() => setModal("options")}>Options</MenuButton>
+        <MenuButton onClick={() => setModal("leaderboard")}>Leaderboard</MenuButton>
       </div>
 
       {modal && (
         <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-
-            {modal === "play" && (
-              <>
-                <h2>Play</h2>
-                <input type="text" placeholder="Username" className="rpg-input" />
-                <input type="password" placeholder="Password" className="rpg-input" />
-                <button onClick={handleLogin}>Login</button>
-                <div className="modal-buttons-row">
-                  <button>Create account</button>
-                  <button onClick={() => setModal(null)}>Close</button>
-                </div>
-              </>
-            )}
-
-            {modal === "Options" && (
-              <>
-                <h2>Options</h2>
-                <label>Master Volume</label>
-                <input type="range" min="0" max="100" />
-                <label>Music Volume</label>
-                <input type="range" min="0" max="100" />
-                <label>Dialogue Volume</label>
-                <input type="range" min="0" max="100" />
-                <button onClick={() => setModal(null)}>Close</button>
-              </>
-            )}
-
-            {modal === "leaderboard" && (
-              <>
-                <h2>Leaderboard</h2>
-                <div style={{ maxHeight: "300px", overflowY: "scroll" }}>
-                  <table className="leaderboard-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Name</th>
-                        <th>Guild</th>
-                        <th>Level</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr><td>1</td><td>Glorp</td><td>—</td><td>42</td></tr>
-                      <tr><td>2</td><td>Feur</td><td>Sigma</td><td>38</td></tr>
-                      <tr><td>3</td><td>Test</td><td>—</td><td>35</td></tr>
-                      <tr><td>4</td><td>Bonjour</td><td>42</td><td>31</td></tr>
-                      <tr><td>5</td><td>Allo</td><td>—</td><td>28</td></tr>
-                      <tr><td>6</td><td>Caca</td><td>Sigma</td><td>22</td></tr>
-                      <tr><td>7</td><td>oups</td><td>—</td><td>21</td></tr>
-                      <tr><td>8</td><td>test123</td><td>—</td><td>15</td></tr>
-                      <tr><td>9</td><td>hip</td><td>—</td><td>10</td></tr>
-                      <tr><td>10</td><td>Noob</td><td>—</td><td>1</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-                <button onClick={() => setModal(null)}>Close</button>
-              </>
-            )}
-
+          <div className="modal" onClick={(e) => {
+            if ((e.target as HTMLElement).tagName === "BUTTON") playClick()
+            e.stopPropagation()
+          }}>
+            {modal === "play"        && <PlayModal onLogin={handleLogin} onClose={() => setModal(null)} />}
+            {modal === "options" && <OptionsModal onClose={() => setModal(null)} audioRef={audioRef} />}
+            {modal === "leaderboard" && <LeaderboardModal onClose={() => setModal(null)} />}
           </div>
         </div>
       )}
