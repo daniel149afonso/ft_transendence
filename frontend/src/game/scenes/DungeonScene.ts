@@ -1,7 +1,11 @@
 import Phaser from "phaser";
 import dungeonData from "../maps/dungeon.json";
-import { Player } from "../entities/Player";
-import { HUD }    from "../ui/HUD";
+import { Player }              from "../entities/Player";
+import { Enemy }               from "../entities/Enemy";
+import { DropItem, rollDrop }  from "../entities/DropItem";
+import { HUD }                 from "../ui/HUD";
+import { GameOverScreen }      from "../ui/GameOverScreen";
+import { playerState }         from "../PlayerState";
 
 const OBSTACLE_LAYERS = ["Water", "Rock"];
 const MAP_W = 800;
@@ -26,8 +30,10 @@ const SWITCH_COL = 13;
 
 export default class DungeonScene extends Phaser.Scene {
     private player!: Player;
-    private hud!:    HUD;
+    private enemies: Enemy[]    = [];
+    private drops:   DropItem[] = [];
     private boxes:   Phaser.Physics.Arcade.Sprite[] = [];
+    private hud!:    HUD;
 
     // Switch door — image + physics body séparés pour pouvoir toggler
     private switchDoorGroup!:      Phaser.Physics.Arcade.StaticGroup;
@@ -49,16 +55,21 @@ export default class DungeonScene extends Phaser.Scene {
     constructor() { super("DungeonScene"); }
 
     init() {
-        this.isGameOver    = false;
-        this.transitioning = false;
+        this.isGameOver      = false;
+        this.transitioning   = false;
         this.switchActivated = false;
-        this.boxes = [];
+        this.boxes   = [];
+        this.enemies = [];
+        this.drops   = [];
     }
 
     preload() {
         this.load.image("dungeon",            "src/game/assets/maps/dungeon.png");
+        this.load.image("drop-heart",         "src/game/assets/items/heart.png");
+        this.load.image("drop-coin",          "src/game/assets/items/coin.png");
         this.load.spritesheet("player",       "src/game/assets/players/player.png",  { frameWidth: 16, frameHeight: 32 });
         this.load.spritesheet("player-atk",   "src/game/assets/players/player.png",  { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet("enemy",        "src/game/assets/enemies/enemy.png",   { frameWidth: 32, frameHeight: 32 });
         this.load.image("box-sprite",         "src/game/assets/objects/box.png");
         this.load.image("switch-normal",      "src/game/assets/objects/switch_normal.png");
         this.load.image("switch-pressed",     "src/game/assets/objects/switch_pressed.png");
@@ -77,15 +88,43 @@ export default class DungeonScene extends Phaser.Scene {
         const walls = this.buildWalls(tileW, tileH);
 
         this.player = new Player(this, SPAWN_X, SPAWN_Y);
-        this.hud    = new HUD(this);
+        // Restaurer les HP depuis l'état persistant
+        this.player.hp = playerState.hp;
+        this.hud = new HUD(this);
 
         this.addBoxes(tileW, tileH);
         this.switchDoorGroup = this.addSwitchDoor(tileW, tileH);
         this.addSwitch(tileW, tileH);
+        this.spawnEnemies(tileW, tileH);
 
         // ── Colliders ────────────────────────────────────────────────────────
         this.physics.add.collider(this.player.sprite, walls);
         this.physics.add.collider(this.player.sprite, this.switchDoorGroup);
+
+        this.enemies.forEach(enemy => {
+            this.physics.add.collider(enemy.sprite, walls);
+            this.physics.add.collider(enemy.sprite, this.switchDoorGroup);
+
+            // Ennemi touche le player → dégâts + knockback
+            this.physics.add.collider(this.player.sprite, enemy.sprite, () => {
+                (enemy.sprite.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+                this.player.takeDamage(
+                    enemy.sprite.x,
+                    enemy.sprite.y,
+                    () => this.triggerGameOver(),
+                );
+            });
+
+            // Attaque du player → hit sur l'ennemi
+            this.physics.add.overlap(this.player.attackZone, enemy.sprite, () => {
+                if (!enemy.sprite.active) return;
+                enemy.takeHit(
+                    this.player.sprite.x,
+                    this.player.sprite.y,
+                    this.player.attackZone.body as Phaser.Physics.Arcade.Body,
+                );
+            });
+        });
 
         this.boxes.forEach(box => {
             this.physics.add.collider(this.player.sprite, box);
@@ -118,13 +157,65 @@ export default class DungeonScene extends Phaser.Scene {
     update() {
         if (this.isGameOver) return;
         this.player.handleInput(this.cursors, this.wasd, this.spaceKey);
+        this.enemies.forEach(e => e.update(this.player.sprite.x, this.player.sprite.y));
+        // Synchroniser les HP dans l'état persistant
+        playerState.hp = this.player.hp;
         this.hud.update(this.player.hp);
-        // Le drag sur les boxes les arrête en ~1 frame — pas besoin de zéroter manuellement
         // Switch : état recalculé chaque frame
         this.updateSwitch();
     }
 
     // ── private helpers ──────────────────────────────────────────────────────
+
+    /** Lit le layer "EnemySpawn" et crée un Enemy par tile non-nul.
+     *  Chaque ennemi reçoit un callback onDeath qui lance le loot drop. */
+    private spawnEnemies(tileW: number, tileH: number) {
+        const layer = (dungeonData.layers as { name: string; data: number[] }[])
+            .find(l => l.name === "EnemySpawn");
+
+        const makeEnemy = (x: number, y: number) => {
+            const enemy = new Enemy(this, x, y, (dx, dy) => this.spawnDrop(dx, dy));
+            this.enemies.push(enemy);
+        };
+
+        if (layer) {
+            layer.data.forEach((tile, idx) => {
+                if (tile === 0) return;
+                const x = (idx % COLS) * tileW + tileW / 2;
+                const y = Math.floor(idx / COLS) * tileH + tileH / 2;
+                makeEnemy(x, y);
+            });
+        }
+
+        if (this.enemies.length === 0) makeEnemy(173, 135); // fallback
+    }
+
+    /** Crée un drop aléatoire à (x, y) et ajoute l'overlap de ramassage. */
+    private spawnDrop(x: number, y: number) {
+        const type = rollDrop();
+        if (!type) return;
+
+        const drop = new DropItem(this, x, y, type);
+        this.drops.push(drop);
+
+        this.physics.add.overlap(this.player.sprite, drop.sprite, () => {
+            if (!drop.collect()) return;
+
+            if (drop.type === "heart") {
+                this.player.heal(1);
+                playerState.hp = this.player.hp;
+                this.hud.update(this.player.hp);
+            }
+            // Coins : à étendre plus tard (score, etc.)
+        });
+    }
+
+    private triggerGameOver() {
+        this.isGameOver = true;
+        this.physics.pause();
+        this.player.sprite.setAlpha(0.4);
+        GameOverScreen.show(this, () => playerState.reset());
+    }
 
     private ensurePixelTexture() {
         if (this.textures.exists("pixel")) return;
@@ -150,12 +241,9 @@ export default class DungeonScene extends Phaser.Scene {
             const y = (row + 1) * tileH;
 
             const box = this.physics.add.sprite(x, y, "box-sprite");
-            // setScale → body.width = frameWidth × scaleX automatiquement
             box.setScale((tileW * 2) / box.width, (tileH * 2) / box.height)
                .setDepth(2)
                .setCollideWorldBounds(true);
-            // Drag élevé : s'arrête en ~1 frame mais garde une vraie vitesse
-            // → collisions murs résolues par vitesse (comme le player)
             (box.body as Phaser.Physics.Arcade.Body).setDrag(10000, 10000);
 
             this.boxes.push(box);
@@ -166,12 +254,10 @@ export default class DungeonScene extends Phaser.Scene {
         const cx = DOOR_COLS[0] * tileW + tileW;   // centre X du bloc 2×2
         const cy = DOOR_ROWS[0] * tileH + tileH;   // centre Y du bloc 2×2
 
-        // Visuel — togglé via setVisible
         this.switchDoorImg = this.add.image(cx, cy, "switch-door-closed")
             .setDisplaySize(tileW * 2, tileH * 2)
             .setDepth(2);
 
-        // Body physique — togglé via setEnable
         const group = this.physics.add.staticGroup();
         this.switchDoorBodySprite = group.create(cx, cy, "pixel") as Phaser.Physics.Arcade.Sprite;
         this.switchDoorBodySprite
@@ -198,24 +284,21 @@ export default class DungeonScene extends Phaser.Scene {
     /** Vérifié chaque frame : si player ou box sur le switch → porte ouverte,
      *  sinon → porte fermée et switch relâché. */
     private updateSwitch() {
-        // Détection : player ou n'importe quelle box sur la zone
         const playerOn = this.physics.overlap(this.player.sprite, this.switchZone);
         const boxOn    = !playerOn && this.boxes.some(
             box => this.physics.overlap(box, this.switchZone),
         );
         const isOn = playerOn || boxOn;
 
-        if (isOn === this.switchActivated) return; // pas de changement d'état
+        if (isOn === this.switchActivated) return;
 
         this.switchActivated = isOn;
 
         if (isOn) {
-            // Appuyer → ouvrir la porte
             this.switchImg.setTexture("switch-pressed");
             this.switchDoorImg.setTexture("switch-door-opened");
             (this.switchDoorBodySprite.body as Phaser.Physics.Arcade.StaticBody).enable = false;
         } else {
-            // Relâcher → refermer la porte
             this.switchImg.setTexture("switch-normal");
             this.switchDoorImg.setTexture("switch-door-closed");
             (this.switchDoorBodySprite.body as Phaser.Physics.Arcade.StaticBody).enable = true;

@@ -1,9 +1,11 @@
 import Phaser from "phaser";
 import mapData from "../maps/village.json";
-import { Player }         from "../entities/Player";
-import { Enemy }          from "../entities/Enemy";
-import { HUD }            from "../ui/HUD";
-import { GameOverScreen } from "../ui/GameOverScreen";
+import { Player }              from "../entities/Player";
+import { Enemy }               from "../entities/Enemy";
+import { DropItem, rollDrop }  from "../entities/DropItem";
+import { HUD }                 from "../ui/HUD";
+import { GameOverScreen }      from "../ui/GameOverScreen";
+import { playerState }         from "../PlayerState";
 
 // Colliders définis directement dans village.json via le layer "Collision"
 const COLLISION_LAYER = "Collision";
@@ -14,14 +16,15 @@ const ROWS  = 20;
 
 export default class MainScene extends Phaser.Scene {
     private player!: Player;
-    private enemy!:  Enemy;
+    private enemies: Enemy[]    = [];
+    private drops:   DropItem[] = [];
     private hud!:    HUD;
 
     private cursors!:  Phaser.Types.Input.Keyboard.CursorKeys;
     private wasd!:     { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
     private spaceKey!: Phaser.Input.Keyboard.Key;
 
-    private isGameOver   = false;
+    private isGameOver    = false;
     private transitioning = false;
     private spawnX = 240;
     private spawnY = 240;
@@ -29,8 +32,10 @@ export default class MainScene extends Phaser.Scene {
     constructor() { super("MainScene"); }
 
     init(data: { fromDungeon?: boolean }) {
-        this.isGameOver   = false;
+        this.isGameOver    = false;
         this.transitioning = false;
+        this.enemies       = [];
+        this.drops         = [];
         if (data?.fromDungeon) {
             // Spawn just below the tower door (col 22, row 8)
             this.spawnX = 22 * (MAP_W / COLS) + (MAP_W / COLS) / 2;
@@ -42,11 +47,13 @@ export default class MainScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image("map", "src/game/assets/maps/village.png");
-        this.load.spritesheet("player",  "src/game/assets/players/player.png",  { frameWidth: 16, frameHeight: 32 });
-        this.load.spritesheet("player-atk", "src/game/assets/players/player.png", { frameWidth: 32, frameHeight: 32 });
-        this.load.spritesheet("enemy",   "src/game/assets/enemies/enemy.png",   { frameWidth: 32, frameHeight: 32 });
-        this.load.spritesheet("objects", "src/game/assets/objects.png", { frameWidth: 16, frameHeight: 16 });
+        this.load.image("map",        "src/game/assets/maps/village.png");
+        this.load.image("drop-heart", "src/game/assets/items/heart.png");
+        this.load.image("drop-coin",  "src/game/assets/items/coin.png");
+        this.load.spritesheet("player",     "src/game/assets/players/player.png",  { frameWidth: 16, frameHeight: 32 });
+        this.load.spritesheet("player-atk", "src/game/assets/players/player.png",  { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet("enemy",      "src/game/assets/enemies/enemy.png",   { frameWidth: 32, frameHeight: 32 });
+        this.load.spritesheet("objects",    "src/game/assets/objects.png",         { frameWidth: 16, frameHeight: 16 });
     }
 
     create() {
@@ -55,11 +62,13 @@ export default class MainScene extends Phaser.Scene {
         const walls = this.buildWalls();
 
         this.player = new Player(this, this.spawnX, this.spawnY);
+        // Restaurer les HP depuis l'état persistant
+        this.player.hp = playerState.hp;
         // Prevent the enemy from pushing the player via physics collision
         (this.player.sprite.body as Phaser.Physics.Arcade.Body).pushable = false;
-        const [ex, ey] = this.getEnemySpawn();
-        this.enemy = new Enemy(this, ex, ey);
-        this.hud    = new HUD(this);
+
+        this.spawnEnemies();
+        this.hud = new HUD(this);
 
         this.setupColliders(walls);
         this.setupDoorTransition();
@@ -73,7 +82,9 @@ export default class MainScene extends Phaser.Scene {
         if (this.isGameOver) return;
 
         this.player.handleInput(this.cursors, this.wasd, this.spaceKey);
-        this.enemy.update(this.player.sprite.x, this.player.sprite.y);
+        this.enemies.forEach(e => e.update(this.player.sprite.x, this.player.sprite.y));
+        // Synchroniser les HP dans l'état persistant
+        playerState.hp = this.player.hp;
         this.hud.update(this.player.hp);
     }
 
@@ -105,48 +116,78 @@ export default class MainScene extends Phaser.Scene {
         return walls;
     }
 
-    /** Lit le layer "EnemySpawn" et retourne la position du premier tile non-nul. */
-    private getEnemySpawn(): [number, number] {
+    /** Lit le layer "EnemySpawn" et crée un Enemy par tile non-nul.
+     *  Chaque ennemi reçoit un callback onDeath qui lance le loot drop. */
+    private spawnEnemies() {
         const tileW = MAP_W / COLS;
         const tileH = MAP_H / ROWS;
         const layer = (mapData.layers as { name: string; data: number[] }[])
             .find(l => l.name === "EnemySpawn");
 
+        const makeEnemy = (x: number, y: number) => {
+            const enemy = new Enemy(this, x, y, (dx, dy) => this.spawnDrop(dx, dy));
+            this.enemies.push(enemy);
+            return enemy;
+        };
+
         if (layer) {
-            const idx = layer.data.findIndex(t => t !== 0);
-            if (idx !== -1) {
+            layer.data.forEach((tile, idx) => {
+                if (tile === 0) return;
                 const x = (idx % COLS) * tileW + tileW / 2;
                 const y = Math.floor(idx / COLS) * tileH + tileH / 2;
-                return [x, y];
-            }
+                makeEnemy(x, y);
+            });
         }
-        // Fallback si le layer est absent
-        return [400, 300];
+
+        if (this.enemies.length === 0) makeEnemy(400, 300); // fallback
+    }
+
+    /** Crée un drop aléatoire à (x, y) et ajoute l'overlap de ramassage. */
+    private spawnDrop(x: number, y: number) {
+        const type = rollDrop();
+        if (!type) return;
+
+        const drop = new DropItem(this, x, y, type);
+        this.drops.push(drop);
+
+        this.physics.add.overlap(this.player.sprite, drop.sprite, () => {
+            if (!drop.collect()) return;
+
+            if (drop.type === "heart") {
+                this.player.heal(1);
+                playerState.hp = this.player.hp;
+                this.hud.update(this.player.hp);
+            }
+            // Coins : à étendre plus tard (score, etc.)
+        });
     }
 
     private setupColliders(walls: Phaser.Physics.Arcade.StaticGroup) {
-        this.physics.add.collider(this.enemy.sprite, walls);
+        this.enemies.forEach(enemy => {
+            this.physics.add.collider(enemy.sprite, walls);
+
+            // Enemy touching player → deal damage + knockback
+            this.physics.add.collider(this.player.sprite, enemy.sprite, () => {
+                (enemy.sprite.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+                this.player.takeDamage(
+                    enemy.sprite.x,
+                    enemy.sprite.y,
+                    () => this.triggerGameOver(),
+                );
+            });
+
+            // Player attack zone overlapping enemy → register a hit
+            this.physics.add.overlap(this.player.attackZone, enemy.sprite, () => {
+                if (!enemy.sprite.active) return;
+                enemy.takeHit(
+                    this.player.sprite.x,
+                    this.player.sprite.y,
+                    this.player.attackZone.body as Phaser.Physics.Arcade.Body,
+                );
+            });
+        });
+
         this.physics.add.collider(this.player.sprite, walls);
-
-        // Enemy touching player → deal 1 half-heart of damage + knockback
-        this.physics.add.collider(this.player.sprite, this.enemy.sprite, () => {
-            (this.enemy.sprite.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-            this.player.takeDamage(
-                this.enemy.sprite.x,
-                this.enemy.sprite.y,
-                () => this.triggerGameOver(),
-            );
-        });
-
-        // Player attack zone overlapping enemy → register a hit
-        this.physics.add.overlap(this.player.attackZone, this.enemy.sprite, () => {
-            if (!this.enemy.sprite.active) return;
-            this.enemy.takeHit(
-                this.player.sprite.x,
-                this.player.sprite.y,
-                this.player.attackZone.body as Phaser.Physics.Arcade.Body,
-            );
-        });
     }
 
     private setupCamera() {
@@ -190,6 +231,6 @@ export default class MainScene extends Phaser.Scene {
         this.isGameOver = true;
         this.physics.pause();
         this.player.sprite.setAlpha(0.4);
-        GameOverScreen.show(this);
+        GameOverScreen.show(this, () => playerState.reset());
     }
 }

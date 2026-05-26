@@ -1,7 +1,12 @@
 import Phaser from "phaser";
 
 export class GameOverScreen {
-    static show(scene: Phaser.Scene) {
+    /**
+     * @param scene           La scène courante
+     * @param onBeforeRestart Appelé juste avant scene.restart() — utile pour
+     *                        réinitialiser playerState.hp avant le redémarrage.
+     */
+    static show(scene: Phaser.Scene, onBeforeRestart?: () => void) {
         const cx = scene.cameras.main.width  / 2;
         const cy = scene.cameras.main.height / 2;
 
@@ -31,6 +36,9 @@ export class GameOverScreen {
 
         btn.on("pointerover",  () => btn.setFillStyle(0xdddddd));
         btn.on("pointerout",   () => btn.setFillStyle(0xffffff));
-        btn.on("pointerdown",  () => scene.scene.restart());
+        btn.on("pointerdown",  () => {
+            onBeforeRestart?.();
+            scene.scene.restart();
+        });
     }
 }

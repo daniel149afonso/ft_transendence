@@ -14,10 +14,12 @@ export class Enemy {
     state: EnemyState = "sleeping";
 
     private scene:   Phaser.Scene;
-    private stunned = false;
+    private stunned  = false;
+    private onDeath?: (x: number, y: number) => void;
 
-    constructor(scene: Phaser.Scene, x: number, y: number) {
-        this.scene = scene;
+    constructor(scene: Phaser.Scene, x: number, y: number, onDeath?: (x: number, y: number) => void) {
+        this.scene   = scene;
+        this.onDeath = onDeath;
 
         if (!scene.anims.exists("enemy-sleep")) {
             scene.anims.create({
@@ -103,6 +105,10 @@ export class Enemy {
     }
 
     private die() {
+        // Capturer position avant la fin du tween (le sprite peut bouger)
+        const dropX = this.sprite.x;
+        const dropY = this.sprite.y;
+
         this.scene.tweens.add({
             targets:  this.sprite,
             alpha:    0,
@@ -113,8 +119,10 @@ export class Enemy {
                 this.sprite.setActive(false).setVisible(false);
                 const body = this.sprite.body as Phaser.Physics.Arcade.Body;
                 body.setEnable(false);
-                body.debugShowBody    = false;
+                body.debugShowBody     = false;
                 body.debugShowVelocity = false;
+                // Notifier la scène pour qu'elle spawne un drop éventuel
+                this.onDeath?.(dropX, dropY);
             },
         });
     }

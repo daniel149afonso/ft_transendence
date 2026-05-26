@@ -26,7 +26,8 @@ export class Player {
 
     facingDir = "down";
     isAttacking = false;
-    hp = 6;
+    hp    = 6;
+    maxHp = 6;
     invincible  = false;
     knockedBack = false; // blocks move() while knockback velocity is active
 
@@ -63,6 +64,11 @@ export class Player {
         }
         if (this.isAttacking || this.knockedBack) return;
         this.move(cursors, wasd);
+    }
+
+    /** Soigne `amount` demi-cœurs, sans dépasser maxHp. */
+    heal(amount: number) {
+        this.hp = Math.min(this.maxHp, this.hp + amount);
     }
 
     // Reduce HP by 1 half-heart and knock back away from (fromX, fromY).
