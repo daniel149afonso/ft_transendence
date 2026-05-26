@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import MainScene    from "./scenes/MainScene";
 import DungeonScene from "./scenes/DungeonScene";
+import { DEBUG }    from "./debug";
 
 export const gameConfig: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
@@ -13,7 +14,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     physics: {
         default: "arcade",
         arcade: {
-            debug: true,
+            debug: DEBUG,
             debugBodyColor: 0xff0000,
             debugStaticBodyColor: 0xff0000,
         }
